@@ -6,11 +6,13 @@ import ddddocr
 import numpy as np
 from datetime import datetime, timedelta, timezone
 
-BOT_TOKEN = ''
-GITHUB_TOKEN = ''
-ADMIN_ID = ""
-REPO_OWNER = ""
-REPO_NAME = ""
+# Load configuration from environment variables
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
+ADMIN_ID = os.environ.get('ADMIN_ID', '')
+REPO_OWNER = os.environ.get('REPO_OWNER', 'pdar6400-prog')
+REPO_NAME = os.environ.get('REPO_NAME', 'gold')
+
 SUCCESS_CODE = asyncio.Queue()
 bot = AsyncTeleBot(BOT_TOKEN)
 user_data = {}
@@ -95,8 +97,6 @@ async def handle_key(message):
             message,
             " သင်၏ key ကို registered မလုပ်ရသေးပါ။"
         )
-
-
 
 @bot.message_handler(commands=['listkeys'])
 async def listkeys(message):
@@ -363,144 +363,52 @@ async def handle_input(message):
             user_data[message.chat.id]['session_url'] = url
             await bot.reply_to(message, "Session URL အားသိမ်းဆည်းပြီးပါပြီ။ /scan 6, 7, 8, all, ascii-lower စသည်ဖြင့်မိမိအသုံးပြုလိုတာကိုရွေးပြီး စတင်ပါ။")
         else:
-            await bot.reply_to(message, f"Session URL မှားယွင်းနေပါသည်။")
+            await bot.reply_to(message, "Session URL မှားယွင်းနေပါသည်။")
 
 @bot.message_handler(commands=['scan'])
-async def scan(message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await bot.reply_to(
-            message,
-            "Usage:\n\n/scan <6, 7, 8, ascii-lower, all>"
-        )
-        return
-    mode = args[1]
+async def handle_scan(message):
     chat_id = message.chat.id
     if not approve.get(chat_id, False):
         await bot.reply_to(message, "/scan ကိုအသုံးမပြုမီ /key ကိုအရင်ပြုလုပ်ပေးပါ။")
         return
-    chat_id = message.chat.id
-    if chat_id not in user_data:
-        await bot.reply_to(message, "/scan ကိုအသုံးမပြုမီ /key ကိုအရင်ပြုလုပ်ပေးပါ။")
-        return
-    if 'session_url' not in user_data[chat_id]:
+    if chat_id not in user_data or 'session_url' not in user_data[chat_id]:
         await bot.reply_to(message, "/scan ကိုအသုံးမပြုမီ /input ဖြင့် Session URL ကိုအရင်ထည့်သွင်းပေးရပါမည်။")
         return
-
-    if (
-        chat_id in scan_tasks
-        and not scan_tasks[chat_id]["task"].done()
-    ):
-        await bot.reply_to(
-            message,
-            "/scan သည် အလုပ်လုပ်နေပြီဖြစ်သည် /scan ကိုထပ်မံမလုပ်ပါနှင့်။"
-        )
+    args = message.text.split()
+    if len(args) < 2:
+        await bot.reply_to(message, "Usage:\n/scan 6\n/scan 7\n/scan 8\n/scan all\n/scan ascii-lower")
         return
-
-    progress_msg = await bot.send_message(
-        chat_id,
-        "🔍Scanning Codes...\n\n")
+    mode = args[1]
     scan_id = str(uuid.uuid4())
-    task = asyncio.create_task(
-        run_bruteforce(
-            mode,
-            chat_id,
-            user_data[chat_id]['session_url'],
-            scan_id,
-            message=message,
-            progress_msg=progress_msg
-        )
-    )
-
-    scan_tasks[chat_id] = {
-        "task": task,
-        "stop": False,
-        "scan_id": scan_id
-    }
-
-@bot.message_handler(commands=['status'])
-async def status(message):
-    if str(message.chat.id) != ADMIN_ID:
-        await bot.reply_to(message, "No Permission")
-        return
-    active_scans = sum(
-        1 for data in scan_tasks.values()
-        if not data["task"].done()
-    )
-    approved_users = sum(1 for v in approve.values() if v)
-    uptime_seconds = int(time.monotonic() - _start_time)
-    hours, remainder = divmod(uptime_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    await bot.reply_to(
-        message,
-        f"📊 Bot Status\n\n"
-        f"⏱ Uptime: {hours}h {minutes}m {seconds}s\n"
-        f"🔍 Active Scans: {active_scans}\n"
-        f"✅ Approved Users: {approved_users}\n"
-        f"👥 Sessions Loaded: {len(user_data)}"
-    )
+    scan_tasks[chat_id] = {"scan_id": scan_id, "stop": False}
+    progress_msg = await bot.send_message(chat_id, "🔍 Scanning စတင်နေပါသည်။")
+    asyncio.create_task(run_bruteforce(mode, chat_id, user_data[chat_id]['session_url'], scan_id, message, progress_msg))
 
 @bot.message_handler(commands=['stop'])
-async def stop_scan(message):
+async def handle_stop(message):
     chat_id = message.chat.id
-    data = scan_tasks.get(chat_id)
-    if data and not data["task"].done():
-        data["stop"] = True
-        data["scan_id"] = None
-        data["task"].cancel()
-        success_messages.pop(chat_id, None)
-        success_texts.pop(chat_id, None)
-        limited_messages.pop(chat_id, None)
-        limited_texts.pop(chat_id, None)
-        retry_counts.pop(chat_id, None)
-        await bot.reply_to(message, "/scan ကို ရပ်တန့်ပြီးပါပြီ။")
+    if chat_id in scan_tasks:
+        scan_tasks[chat_id]['stop'] = True
+        await bot.reply_to(message, "🛑 Scanning ကိုရပ်တန့်လိုက်ပါပြီ။")
     else:
-        await bot.reply_to(message, "/stop ဖြင့်ရပ်တန့်ရန် မည်သည့်အလုပ်မျှမရှိပါ။")
-
-async def github_update_scheduler():
-    global SUCCESS_CODE
-    while True:
-        await asyncio.sleep(80)
-        items = []
-        while not SUCCESS_CODE.empty():
-            items.append(await SUCCESS_CODE.get())
-        if items:
-            try:
-                results, sha = await get_file_content("result.json")
-                for item in items:
-                    chat_id = str(item["chat_id"])
-                    code = item["code"]
-                    if chat_id not in results:
-                        results[chat_id] = []
-                    if code not in results[chat_id]:
-                        results[chat_id].append(code)
-                await update_file_content(
-                    "result.json",
-                    results,
-                    sha,
-                    "Periodic Update"
-                )
-            except Exception as e:
-                print(f"Update Error: {e}")
+        await bot.reply_to(message, "လက်ရှိတွင် မည်သည့် scan မျှမရှိပါ။")
 
 def digit_generator(length):
-    return "".join(random.choice(string.digits) for _ in range(length))
+    return ''.join(random.choices(string.digits, k=length))
 
-strings = string.ascii_lowercase + string.digits
-def all_generator(length=6):
-    return "".join(random.choice(strings) for _ in range(length))
+def ascii_generator(length):
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-strings_2 = string.ascii_lowercase
-def ascii_generator(length=6):
-    return "".join(random.choice(strings_2) for _ in range(length))
+def all_generator(length):
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
 def iter_codes(mode):
-    if mode in ["6", "7"]:
-        length = int(mode)
-        codes = [str(i).zfill(length) for i in range(10 ** length)]
-        random.shuffle(codes)
-        yield from codes
-        return
+    if mode == "6":
+        while True:
+            yield digit_generator(6)
+    if mode == "7":
+        while True:
+            yield digit_generator(7)
     if mode == "8":
         while True:
             yield digit_generator(8)
@@ -688,7 +596,6 @@ async def run_bruteforce(mode, chat_id, session_url, scan_id, message=None, prog
         limited_messages.pop(chat_id, None)
         limited_texts.pop(chat_id, None)
         retry_counts.pop(chat_id, None)
-
 
 def get_mac():
     first_byte = random.choice([0x02, 0x06, 0x0A, 0x0E])
@@ -884,7 +791,7 @@ async def perform_check(session_url, code, chat_id, scan_id=None, recheck=False,
                                 chat_id=message.chat.id,
                                 text=f"Limited Codes:\n\n{limited_line}"
                             )
-                            limited_messages[chat_id] = sent.message_id
+                            success_messages[chat_id] = sent.message_id
                         except Exception as err:
                             print(f"Limited Fallback Error: {err}")
             except Exception as e:
@@ -937,7 +844,6 @@ async def Code_Expires_Date(session_id):
     except Exception as e:
         print(f"[Code_Expires_Date] error: {e}")
         return "📋 Plan: Unknown | ⏳ Time: Unknown"
-
 
 _ocr = ddddocr.DdddOcr(show_ad=False)
 
@@ -1005,6 +911,22 @@ async def Varify_Captcha(session, session_id, text):
         else:
             return None
 
+async def github_update_scheduler():
+    while True:
+        try:
+            data = await SUCCESS_CODE.get()
+            chat_id = data['chat_id']
+            code = data['code']
+            results, sha = await get_file_content("result.json")
+            chat_id_str = str(chat_id)
+            if chat_id_str not in results:
+                results[chat_id_str] = []
+            if code not in results[chat_id_str]:
+                results[chat_id_str].append(code)
+                await update_file_content("result.json", results, sha, f"Add code for {chat_id_str}")
+        except Exception as e:
+            print(f"GitHub Scheduler Error: {e}")
+        await asyncio.sleep(1)
 
 async def start_polling():
     backoff = 5
