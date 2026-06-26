@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    restart: always
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - ADMIN_ID=${ADMIN_ID}
+      - REPO_OWNER=${REPO_OWNER}
+      - REPO_NAME=${REPO_NAME}
+    ports:
+      - "8099:8099" # The bot's web server runs on port 8099"
